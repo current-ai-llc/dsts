@@ -32,8 +32,8 @@ import { FilePersistence, CheckpointState } from './persistence';
  * GEPA Optimizer - Multi-objective optimization through reflective evolution
  */
 export class GEPA {
-  private adapter: GEPAAdapter;
-  private reflectionLM: LanguageModel;
+  private adapter!: GEPAAdapter;
+  private reflectionLM!: LanguageModel;
   private componentSelector: ComponentSelector;
   private batchSampler: BatchSampler;
   private candidateSelector: CandidateSelector;
@@ -48,6 +48,7 @@ export class GEPA {
   private latestReflectionSummary: string | null = null;
   private reflectionModelName?: string;
   private reflectionLMProviderOptions?: Record<string, any>;
+  private taskModelName?: string;
   private tieEpsilon: number = 0;
   private rng: () => number;
   private rngState: number = 0;
@@ -68,24 +69,34 @@ export class GEPA {
     // Initialize adapter
     if (options.adapter) {
       this.adapter = options.adapter;
-    } else if (options.taskLM) {
+    } 
+    
+    if (options.taskLM) {
       const taskLMConfig = options.taskLM;
       if (typeof taskLMConfig === 'string') {
-        this.adapter = new DefaultAdapter({
-          model: taskLMConfig,
-        });
+        if (!this.adapter) {
+          this.adapter = new DefaultAdapter({ model: taskLMConfig });
+        }
+        this.taskModelName = taskLMConfig;
+      } else if (typeof taskLMConfig === 'function') {
+        // Cannot introspect model name from function; adapter must handle task calls
       } else if (typeof taskLMConfig === 'object' && 'model' in taskLMConfig) {
-        this.adapter = new DefaultAdapter({
-          model: taskLMConfig.model,
-          apiKey: taskLMConfig.apiKey,
-          temperature: taskLMConfig.temperature,
-          costEstimator: taskLMConfig.costEstimator,
-          maxConcurrency: taskLMConfig.maxConcurrency,
-        });
+        if (!this.adapter) {
+          this.adapter = new DefaultAdapter({
+            model: taskLMConfig.model,
+            apiKey: taskLMConfig.apiKey,
+            temperature: taskLMConfig.temperature,
+            costEstimator: taskLMConfig.costEstimator,
+            maxConcurrency: taskLMConfig.maxConcurrency,
+          });
+        }
+        this.taskModelName = taskLMConfig.model;
       } else {
-        throw new Error('taskLM must be a string or an object with a model property');
+        throw new Error('taskLM must be a string, function, or an object with a model property');
       }
-    } else {
+    }
+
+    if (!this.adapter) {
       throw new Error('Either adapter or taskLM must be provided');
     }
 
@@ -593,19 +604,17 @@ Provide only the improved text, without any explanation or markdown formatting:`
 - Any trade-offs or uncertainties to watch for next iteration
 Use short paragraphs and bullet points. Avoid code fences. Feedback JSON follows:\n\n${JSON.stringify(reflectiveDataset, null, 2)}`;
 
-      let text: string;
-      if (this.reflectionModelName) {
-        const result = await generateText({
-          model: this.reflectionModelName,
-          messages: [{ role: 'user', content: summaryPrompt }],
-          temperature: 0.3,
-          providerOptions: this.reflectionLMProviderOptions,
-        });
-        text = result.text;
-      } else {
-        text = await this.reflectionLM(summaryPrompt);
+      if (!this.taskModelName) {
+        this.latestReflectionSummary = 'Task LM not configured; skipped summary.';
+        return;
       }
-      this.latestReflectionSummary = (text || '').trim();
+
+      const result = await generateText({
+        model: this.taskModelName,
+        messages: [{ role: 'user', content: summaryPrompt }],
+        temperature: 0.3,
+      });
+      this.latestReflectionSummary = (result.text || '').trim();
     } catch (e) {
       this.latestReflectionSummary = 'Summary generation failed.';
     }
