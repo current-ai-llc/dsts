@@ -3,6 +3,7 @@ export { DefaultAdapter } from './adapters/default-adapter';
 export type { DefaultAdapterOptions, DefaultAdapterTask, DefaultAdapterTrace } from './adapters/default-adapter';
 
 export * from './types';
+export type { ZodSchema } from 'zod';
 export * from './pareto-utils';
 export * from './strategies';
 

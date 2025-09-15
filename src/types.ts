@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import type { ZodSchema } from 'zod';
 import { CoreMessage } from 'ai';
 
 // Generic type parameters
@@ -173,7 +173,7 @@ export interface GEPAResult {
 export interface GenerateObjectOptions<T> {
   model: string;
   messages: CoreMessage[];
-  schema: z.ZodSchema<T>;
+  schema: ZodSchema<T>;
   system?: string;
   temperature?: number;
   maxRetries?: number;

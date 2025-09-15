@@ -10,14 +10,14 @@ DSTS is a minimal, AI SDK–aligned prompt optimizer for TypeScript. It optimize
 ## Install
 
 ```bash
-npm i ai tokenlens zod
+npm i @currentai/dsts zod
 ```
 
 ## Quick start
 
 ```ts
 import { z } from "zod";
-import { optimize, DefaultAdapterTask } from "./src";
+import { optimize, DefaultAdapterTask } from "@currentai/dsts";
 
 // Define schema (generateObject)
 const Item = z.object({ title: z.string(), url: z.string().url() });

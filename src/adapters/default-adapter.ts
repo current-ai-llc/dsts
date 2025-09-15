@@ -1,5 +1,5 @@
 import { generateObject, generateText } from 'ai';
-import { z } from 'zod';
+import type { ZodSchema } from 'zod';
 import { normalizeUsage, estimateCost } from 'tokenlens';
 import { GEPAAdapter, EvaluationBatch, Candidate } from '../types';
 
@@ -17,7 +17,7 @@ export interface DefaultAdapterOptions {
 export interface DefaultAdapterTask<T = any> {
   input: any;
   expectedOutput?: T;
-  schema?: z.ZodSchema<T>;
+  schema?: ZodSchema<T>;
   scorer?: (prediction: T, expected?: T) => number;
 }
 
