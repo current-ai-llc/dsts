@@ -1,0 +1,48 @@
+{
+  "name": "@currentai/dsts",
+  "version": "0.1.0",
+  "description": "GEPA (Genetic-Pareto) optimizer for TypeScript - Multi-objective optimization through reflective evolution, with first-class support for AI SDK's generateObject",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "test:watch": "vitest watch",
+    "example": "tsx examples/email-extraction.ts",
+    "example:catalyst": "tsx examples/catalyst-extraction.ts",
+    "example:catalyst-classify": "tsx examples/catalyst-classify.ts",
+    "example:message-spam": "tsx examples/message-spam.ts",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "gepa",
+    "optimization",
+    "ai",
+    "generateObject",
+    "zod",
+    "pareto"
+  ],
+  "author": "Current AI",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/current-ai-llc/dsts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/current-ai-llc/dsts/issues"
+  },
+  "homepage": "https://github.com/current-ai-llc/dsts#readme",
+  "license": "MIT",
+  "dependencies": {
+    "ai": "^5.0.44",
+    "tokenlens": "^1.2.1",
+    "zod": "^4.1.8"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.4.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
