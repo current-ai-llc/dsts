@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Chore: tiny version bump.
+
 ## 0.1.1
 
 - Change: Make `zod` a peer dependency and use type-only imports to avoid schema type mismatch across installations.
