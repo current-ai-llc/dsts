@@ -40,9 +40,14 @@ export class GEPA {
   private logger?: Logger;
   private perfectScore: number;
   private skipPerfectScore: boolean;
-  private maxMetricCalls: number;
+  private maxMetricCalls?: number;
   private maxIterations?: number;
   private maxBudgetUSD?: number;
+  private verbose: boolean = false;
+  private latestReflectionPrompt: string | null = null;
+  private latestReflectionSummary: string | null = null;
+  private reflectionModelName?: string;
+  private reflectionLMProviderOptions?: Record<string, any>;
   private tieEpsilon: number = 0;
   private rng: () => number;
   private rngState: number = 0;
@@ -126,6 +131,13 @@ export class GEPA {
     this.maxMetricCalls = options.maxMetricCalls;
     this.maxIterations = options.maxIterations;
     this.maxBudgetUSD = options.maxBudgetUSD;
+    this.verbose = options.verbose ?? false;
+    this.reflectionLMProviderOptions = options.reflectionLMProviderOptions;
+
+    // Ensure we have at least one stopping criterion
+    if (this.maxMetricCalls === undefined && this.maxIterations === undefined && this.maxBudgetUSD === undefined) {
+      throw new Error('You must set at least one of maxMetricCalls, maxIterations, or maxBudgetUSD');
+    }
   }
 
   /**
@@ -185,7 +197,13 @@ export class GEPA {
     const earlyStoppingTrials = 5;
 
     // Main optimization loop
-    while (this.totalMetricCalls < this.maxMetricCalls) {
+    while (true) {
+      // Metric calls cap
+      if (this.maxMetricCalls !== undefined && this.totalMetricCalls >= this.maxMetricCalls) {
+        this.log('info', 'Max metric calls reached', { totalMetricCalls: this.totalMetricCalls, maxMetricCalls: this.maxMetricCalls });
+        break;
+      }
+
       iteration++;
 
       // Budget cap check
@@ -312,7 +330,7 @@ export class GEPA {
         accepted,
       });
 
-      // Log Pareto and hypervolume each iteration (2D only)
+        // Log Pareto and hypervolume each iteration (2D only)
       const iterPareto = buildParetoFront(
         candidates.map((c, idx) => ({ idx, scores: c.scores })),
         this.tieEpsilon
@@ -320,6 +338,23 @@ export class GEPA {
       const iterHv = hypervolume2D(iterPareto.map(p => candidates[p.idx].scores));
       if (iterHv !== null) {
         this.log('info', 'Iter hypervolume (2D)', { iteration, hypervolume2D: iterHv });
+      }
+
+      // Verbose printing
+      if (this.verbose) {
+        const paretoLines = iterPareto.map(p => {
+          const c = candidates[p.idx];
+          const corr = c.scores.correctness?.toFixed(4);
+          const lat = c.scores.latency?.toFixed(2);
+          const sc = c.scalarScore.toFixed(4);
+          return `#${p.idx}: correctness=${corr}, latency=${lat}, scalar=${sc}`;
+        }).join('\n');
+        const header = `\n=== Iteration ${iteration} Summary ===`;
+        const hvLine = `Hypervolume(2D): ${iterHv ?? 'n/a'}`;
+        const callsCost = `Calls: ${this.totalMetricCalls}  |  Cost USD: ${this.totalCostUSD.toFixed(4)}`;
+        const promptBlock = this.latestReflectionPrompt ? `\n--- Latest Reflection Prompt ---\n${this.latestReflectionPrompt}` : '';
+        const summaryBlock = this.latestReflectionSummary ? `\n--- Reflection Summary ---\n${this.latestReflectionSummary}` : '';
+        console.log(`${header}\n${hvLine}\n${callsCost}\n--- Pareto Front ---\n${paretoLines}${promptBlock}${summaryBlock}\n`);
       }
 
       // Archive + checkpoint
@@ -474,6 +509,8 @@ export class GEPA {
         evalBatch,
         componentsToUpdate
       );
+      // Try to generate a human-readable summary for verbose mode
+      await this.generateAndStoreReflectionSummary(reflectiveDataset);
       return await this.adapter.proposeNewTexts(
         candidate,
         reflectiveDataset,
@@ -490,6 +527,8 @@ export class GEPA {
 
     const newCandidate = { ...candidate };
 
+    // Build prompts per component and remember the latest/combined prompt
+    const promptSections: string[] = [];
     for (const component of componentsToUpdate) {
       const examples = reflectiveDataset[component] || [];
       if (examples.length === 0) continue;
@@ -499,10 +538,15 @@ export class GEPA {
         candidate[component],
         examples
       );
+      promptSections.push(`----- Component: ${component} -----\n${prompt}`);
 
       const newText = await this.reflectionLM(prompt);
       newCandidate[component] = newText.trim();
     }
+    this.latestReflectionPrompt = promptSections.length > 0 ? promptSections.join("\n\n") : null;
+
+    // Generate user-readable summary for this iteration (verbose mode)
+    await this.generateAndStoreReflectionSummary(reflectiveDataset);
 
     return newCandidate;
   }
@@ -535,6 +579,39 @@ Provide only the improved text, without any explanation or markdown formatting:`
   }
 
   /**
+   * Generate and store a human-readable summary of reflection feedback
+   */
+  private async generateAndStoreReflectionSummary(reflectiveDataset: Record<string, Array<Record<string, any>>>): Promise<void> {
+    if (!this.verbose) {
+      this.latestReflectionSummary = null;
+      return;
+    }
+    try {
+      const summaryPrompt = `You will receive reflection feedback grouped by component from an optimization iteration. Write a concise, user-readable summary that explains:
+- The main issues observed in the feedback
+- The specific changes the next candidate will try for each component
+- Any trade-offs or uncertainties to watch for next iteration
+Use short paragraphs and bullet points. Avoid code fences. Feedback JSON follows:\n\n${JSON.stringify(reflectiveDataset, null, 2)}`;
+
+      let text: string;
+      if (this.reflectionModelName) {
+        const result = await generateText({
+          model: this.reflectionModelName,
+          messages: [{ role: 'user', content: summaryPrompt }],
+          temperature: 0.3,
+          providerOptions: this.reflectionLMProviderOptions,
+        });
+        text = result.text;
+      } else {
+        text = await this.reflectionLM(summaryPrompt);
+      }
+      this.latestReflectionSummary = (text || '').trim();
+    } catch (e) {
+      this.latestReflectionSummary = 'Summary generation failed.';
+    }
+  }
+
+  /**
    * Initialize language model from config
    */
   private initializeLanguageModel(config?: LanguageModelConfig): LanguageModel {
@@ -548,12 +625,14 @@ Provide only the improved text, without any explanation or markdown formatting:`
 
     const model = typeof config === 'string' ? config : config.model;
     const temperature = typeof config === 'object' ? config.temperature : 0.7;
+    this.reflectionModelName = model;
 
     return async (prompt: string) => {
       const result = await generateText({
         model,
         messages: [{ role: 'user', content: prompt }],
         temperature,
+        providerOptions: this.reflectionLMProviderOptions,
       });
       return result.text;
     };

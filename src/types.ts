@@ -109,6 +109,8 @@ export interface GEPAOptions {
   // Model configuration
   taskLM?: LanguageModelConfig;
   reflectionLM?: LanguageModelConfig;
+  // Provider-specific options for the reflection LM (passed to ai-sdk)
+  reflectionLMProviderOptions?: Record<string, any>;
   
   // Strategy configuration
   candidateSelectionStrategy?: 'pareto' | 'current_best';
@@ -124,7 +126,7 @@ export interface GEPAOptions {
   maxMergeInvocations?: number;
   
   // Budget
-  maxMetricCalls: number;
+  maxMetricCalls?: number; // optional; if undefined, requires either maxIterations or maxBudgetUSD to be set
   maxIterations?: number; // optional hard cap on optimization iterations
   maxBudgetUSD?: number; // optional cost budget across all evaluations
   
@@ -134,6 +136,7 @@ export interface GEPAOptions {
   // Logging
   logger?: Logger;
   displayProgressBar?: boolean;
+  verbose?: boolean; // when true, print per-iteration prompts, scores, and summaries
 
   // Persistence (optional file-based)
   persistence?: {
