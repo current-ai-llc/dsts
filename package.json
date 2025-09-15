@@ -10,8 +10,6 @@
     "test": "vitest",
     "test:watch": "vitest watch",
     "example": "tsx examples/email-extraction.ts",
-    "example:catalyst": "tsx examples/catalyst-extraction.ts",
-    "example:catalyst-classify": "tsx examples/catalyst-classify.ts",
     "example:message-spam": "tsx examples/message-spam.ts",
     "clean": "rm -rf dist"
   },

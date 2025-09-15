@@ -63,9 +63,8 @@ console.log("Best system prompt:", result.bestCandidate.system);
 
 ## Examples
 
-- Email extraction to a rich object schema: [`examples/email-extraction.ts`](file:///home/swiecki/coding/dsts/examples/email-extraction.ts#L1-L236)
-- Catalyst extraction (array of objects): [`examples/catalyst-extraction.ts`](file:///home/swiecki/coding/dsts/examples/catalyst-extraction.ts#L1-L269)
-- Catalyst classification: [`examples/catalyst-classify.ts`](file:///home/swiecki/coding/dsts/examples/catalyst-classify.ts#L1-L137)
+- Email extraction to a rich object schema: [`examples/email-extraction.ts`](file:///home/swiecki/coding/dsts/examples/email-extraction.ts)
+- Message spam classification: [`examples/message-spam.ts`](file:///home/swiecki/coding/dsts/examples/message-spam.ts)
 
 Each example:
 
@@ -76,9 +75,8 @@ Each example:
 Run:
 
 ```bash
-npm run example           # email extraction
-npm run example:catalyst  # array extraction
-npm run example:catalyst-classify
+npm run example              # email extraction
+npm run example:message-spam # spam classification
 ```
 
 ## How it works
