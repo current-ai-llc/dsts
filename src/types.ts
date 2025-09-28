@@ -71,6 +71,17 @@ export type LanguageModelConfig = string | LanguageModel | {
   costEstimator?: CostEstimator;
   // Bounded concurrency for per-example calls of the task LM
   maxConcurrency?: number;
+  // Tool passthrough for AI SDK generateText/generateObject
+  tools?: Record<string, any>;
+  // Provider-specific options (e.g., OpenAI reasoningEffort, serviceTier)
+  providerOptions?: Record<string, any>;
+  // Stop condition passthrough (e.g., ai.stepCountIs)
+  stopWhen?: any;
+  // Tool calling knobs
+  toolChoice?: any;
+  maxToolRoundtrips?: number;
+  // Telemetry passthrough
+  experimentalTelemetry?: Record<string, any>;
 };
 
 // Component selection strategies
@@ -120,6 +131,12 @@ export interface GEPAOptions {
   skipPerfectScore?: boolean;
   reflectionMinibatchSize?: number;
   perfectScore?: number;
+  /**
+   * Optional short hint inserted into the reflection prompt to direct attention.
+   * Keep this concise; it will be interpolated near the top of the prompt.
+   */
+  reflectionHint?: string;
+
   
   // Merge settings
   useMerge?: boolean;

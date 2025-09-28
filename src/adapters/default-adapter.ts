@@ -12,6 +12,13 @@ export interface DefaultAdapterOptions {
   costEstimator?: (info: { model: string; input: string; output: string; result?: any }) => number;
   // Bounded concurrency for per-example calls (default: 1)
   maxConcurrency?: number;
+  // Tool and provider passthrough
+  tools?: Record<string, any>;
+  providerOptions?: Record<string, any>;
+  stopWhen?: any;
+  toolChoice?: any;
+  maxToolRoundtrips?: number;
+  experimentalTelemetry?: Record<string, any>;
 }
 
 export interface DefaultAdapterTask<T = any> {
@@ -43,6 +50,12 @@ export class DefaultAdapter<T = any> implements GEPAAdapter<DefaultAdapterTask<T
   private maxRetries: number;
   private costEstimator?: (info: { model: string; input: string; output: string; result?: any }) => number;
   private maxConcurrency: number;
+  private tools?: Record<string, any>;
+  private providerOptions?: Record<string, any>;
+  private stopWhen?: any;
+  private toolChoice?: any;
+  private maxToolRoundtrips?: number;
+  private experimentalTelemetry?: Record<string, any>;
   
   constructor(options: DefaultAdapterOptions) {
     this.model = options.model;
@@ -51,6 +64,12 @@ export class DefaultAdapter<T = any> implements GEPAAdapter<DefaultAdapterTask<T
     this.maxRetries = options.maxRetries ?? 3;
     this.costEstimator = options.costEstimator ?? this.buildDefaultCostEstimator(options.model);
     this.maxConcurrency = Math.max(1, options.maxConcurrency ?? 10);
+    this.tools = options.tools;
+    this.providerOptions = options.providerOptions;
+    this.stopWhen = options.stopWhen;
+    this.toolChoice = options.toolChoice;
+    this.maxToolRoundtrips = options.maxToolRoundtrips;
+    this.experimentalTelemetry = options.experimentalTelemetry;
   }
 
   private buildDefaultCostEstimator(model: string) {
@@ -102,6 +121,17 @@ export class DefaultAdapter<T = any> implements GEPAAdapter<DefaultAdapterTask<T
 
         let rawResult: any;
         let output: T;
+        const commonOpts = {
+          temperature: this.temperature,
+          maxRetries: this.maxRetries,
+          tools: this.tools,
+          providerOptions: this.providerOptions,
+          stopWhen: this.stopWhen,
+          toolChoice: this.toolChoice,
+          maxToolRoundtrips: this.maxToolRoundtrips,
+          experimental_telemetry: this.experimentalTelemetry,
+        } as any;
+
         if (task.schema) {
           const result = await generateObject({
             model: this.model,
@@ -110,8 +140,7 @@ export class DefaultAdapter<T = any> implements GEPAAdapter<DefaultAdapterTask<T
               { role: 'user', content: userPrompt },
             ],
             schema: task.schema,
-            temperature: this.temperature,
-            maxRetries: this.maxRetries,
+            ...commonOpts,
           });
           rawResult = result;
           output = result.object as T;
@@ -122,8 +151,7 @@ export class DefaultAdapter<T = any> implements GEPAAdapter<DefaultAdapterTask<T
               { role: 'system', content: systemPrompt },
               { role: 'user', content: userPrompt },
             ],
-            temperature: this.temperature,
-            maxRetries: this.maxRetries,
+            ...commonOpts,
           });
           rawResult = result;
           output = result.text as any as T;

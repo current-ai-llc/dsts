@@ -38,8 +38,15 @@ const result = await optimize({
   seedCandidate: { system: "Extract a title and a valid URL from the text." },
   trainset,
   // Optional valset (defaults to trainset)
-  taskLM: "openai/gpt-5-nano",
+  taskLM: {
+    model: "openai/gpt-5-nano",
+    // Any extra fields are passed through to AI SDK calls
+    temperature: 0.2,
+    providerOptions: { openai: { service_tier: "default" } },
+  },
   reflectionLM: "openai/o3",
+  // Simple way to steer reflection without templates
+  reflectionHint: "Prioritize exact field correctness; avoid hallucinating properties.",
   maxIterations: 5,
   maxMetricCalls: 200,
   maxBudgetUSD: 50,
@@ -88,9 +95,36 @@ npm run example:message-spam # spam classification
   - cost is tracked cumulatively and enforced via `maxBudgetUSD`.
 - Pareto front and 2D hyper‑volume (when exactly two objectives) are logged per iteration and at the end.
 
+### AI SDK passthrough
+
+Pass the object variant for `taskLM` to forward extra options directly into AI SDK calls (both `generateObject` and `generateText`). All unknown fields are spread through to the adapter and then to the SDK:
+
+```ts
+optimize({
+  // ...
+  taskLM: {
+    model: "openai/gpt-5-nano",
+    temperature: 0.2,
+    providerOptions: { openai: { service_tier: "default" } },
+    // tools, stopWhen, toolChoice, maxToolRoundtrips, experimentalTelemetry, etc. are also supported
+  },
+})
+```
+
+### Steering reflection (no templates)
+
+Use `reflectionHint` to insert a short guidance string at the top of the reflection prompt. Keep it concise:
+
+```ts
+optimize({
+  // ...
+  reflectionHint: "Prioritize exact field correctness; avoid hallucinating properties.",
+})
+```
+
 Key files:
 
-- Optimizer: [`src/gepa.ts`](file:///home/swiecki/coding/dsts/src/gepa.ts#L1-L495)
+- Optimizer: [`src/gepa.ts`](file:///home/swiecki/coding/dsts/src/gepa.ts#L1-L686)
 - Adapter: [`src/adapters/default-adapter.ts`](file:///home/swiecki/coding/dsts/src/adapters/default-adapter.ts#L1-L267) (default maxConcurrency = 10)
 - Pareto utilities: [`src/pareto-utils.ts`](file:///home/swiecki/coding/dsts/src/pareto-utils.ts#L1-L241)
 - Types: [`src/types.ts`](file:///home/swiecki/coding/dsts/src/types.ts#L1-L158)

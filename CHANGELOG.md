@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4
+
+- Feature: add `reflectionHint` to steer reflection without templates; interpolated into the default reflection prompt.
+- Change: remove `reflectionPromptBuilder` hook to keep the surface minimal.
+- Change: simplify `taskLM` wiring by spreading passthrough options into the adapter; all extra fields (e.g., `tools`, `providerOptions`, `stopWhen`, `toolChoice`, `maxToolRoundtrips`, `experimentalTelemetry`) are forwarded to AI SDK calls.
+- Docs: update README quickstart to show object-form `taskLM` and `reflectionHint`; add sections on AI SDK passthrough and reflection steering.
+
 ## 0.1.2
 
 - Chore: tiny version bump.

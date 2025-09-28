@@ -82,12 +82,14 @@ export class GEPA {
         // Cannot introspect model name from function; adapter must handle task calls
       } else if (typeof taskLMConfig === 'object' && 'model' in taskLMConfig) {
         if (!this.adapter) {
+          const { model, apiKey, temperature, costEstimator, maxConcurrency, ...passthrough } = taskLMConfig
           this.adapter = new DefaultAdapter({
-            model: taskLMConfig.model,
-            apiKey: taskLMConfig.apiKey,
-            temperature: taskLMConfig.temperature,
-            costEstimator: taskLMConfig.costEstimator,
-            maxConcurrency: taskLMConfig.maxConcurrency,
+            model,
+            apiKey,
+            temperature,
+            costEstimator,
+            maxConcurrency,
+            ...passthrough,
           });
         }
         this.taskModelName = taskLMConfig.model;
@@ -570,7 +572,10 @@ export class GEPA {
     currentText: string,
     examples: Array<Record<string, any>>
   ): string {
-    return `You are tasked with improving a text component based on execution feedback.
+    const hint = this.options.reflectionHint
+      ? `\nAdditional guidance:\n${this.options.reflectionHint}\n`
+      : ''
+    return `You are tasked with improving a text component based on execution feedback.${hint}
 
 Component Name: ${componentName}
 Current Text:
