@@ -1,6 +1,6 @@
 {
   "name": "@currentai/dsts",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "GEPA (Genetic-Pareto) optimizer for TypeScript - Multi-objective optimization through reflective evolution, with first-class support for AI SDK's generateObject",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

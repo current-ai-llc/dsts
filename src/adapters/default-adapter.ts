@@ -19,6 +19,8 @@ export interface DefaultAdapterOptions {
   toolChoice?: any;
   maxToolRoundtrips?: number;
   experimentalTelemetry?: Record<string, any>;
+  // Whether to concatenate text from all steps for reflection (useful for capturing text before tool calls)
+  reflectOnAllTexts?: boolean;
 }
 
 export interface DefaultAdapterTask<T = any> {
@@ -56,6 +58,7 @@ export class DefaultAdapter<T = any> implements GEPAAdapter<DefaultAdapterTask<T
   private toolChoice?: any;
   private maxToolRoundtrips?: number;
   private experimentalTelemetry?: Record<string, any>;
+  private reflectOnAllTexts: boolean;
   
   constructor(options: DefaultAdapterOptions) {
     this.model = options.model;
@@ -70,6 +73,7 @@ export class DefaultAdapter<T = any> implements GEPAAdapter<DefaultAdapterTask<T
     this.toolChoice = options.toolChoice;
     this.maxToolRoundtrips = options.maxToolRoundtrips;
     this.experimentalTelemetry = options.experimentalTelemetry;
+    this.reflectOnAllTexts = options.reflectOnAllTexts ?? false;
   }
 
   private buildDefaultCostEstimator(model: string) {
@@ -154,7 +158,15 @@ export class DefaultAdapter<T = any> implements GEPAAdapter<DefaultAdapterTask<T
             ...commonOpts,
           });
           rawResult = result;
-          output = result.text as any as T;
+          
+          // Extract full text from all steps if reflectOnAllTexts is enabled
+          let fullText = result.text;
+          if (this.reflectOnAllTexts && result.steps && result.steps.length > 0) {
+            // Concatenate text from all steps to capture all text content
+            fullText = result.steps.map(step => step.text).filter(Boolean).join(' ');
+          }
+          
+          output = fullText as any as T;
         }
 
         latencyMs = Date.now() - t0;

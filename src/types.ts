@@ -82,6 +82,8 @@ export type LanguageModelConfig = string | LanguageModel | {
   maxToolRoundtrips?: number;
   // Telemetry passthrough
   experimentalTelemetry?: Record<string, any>;
+  // Whether to concatenate text from all steps for reflection (useful for capturing text before tool calls)
+  reflectOnAllTexts?: boolean;
 };
 
 // Component selection strategies

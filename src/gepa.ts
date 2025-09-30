@@ -82,13 +82,14 @@ export class GEPA {
         // Cannot introspect model name from function; adapter must handle task calls
       } else if (typeof taskLMConfig === 'object' && 'model' in taskLMConfig) {
         if (!this.adapter) {
-          const { model, apiKey, temperature, costEstimator, maxConcurrency, ...passthrough } = taskLMConfig
+          const { model, apiKey, temperature, costEstimator, maxConcurrency, reflectOnAllTexts, ...passthrough } = taskLMConfig
           this.adapter = new DefaultAdapter({
             model,
             apiKey,
             temperature,
             costEstimator,
             maxConcurrency,
+            reflectOnAllTexts,
             ...passthrough,
           });
         }
@@ -237,17 +238,44 @@ export class GEPA {
         this.tieEpsilon
       ).map(p => p.idx);
 
+      this.log('debug', 'Pareto front built', {
+        iteration,
+        totalCandidates: candidates.length,
+        paretoIndices,
+        paretoSize: paretoIndices.length
+      });
+
       const parentIdx = this.candidateSelector.selectCandidate(
         candidates,
         paretoIndices
       );
       const parent = candidates[parentIdx];
 
+      this.log('debug', 'Parent candidate selected', {
+        iteration,
+        parentIdx,
+        parentScalarScore: parent.scalarScore,
+        parentScores: parent.scores,
+        parentComponentsPreview: Object.keys(parent.candidate).reduce((acc, key) => {
+          acc[key] = parent.candidate[key].substring(0, 100) + (parent.candidate[key].length > 100 ? '...' : '');
+          return acc;
+        }, {} as Record<string, string>)
+      });
+
       // Get minibatch for reflection
       const minibatch = this.batchSampler.nextBatch(trainset, iteration);
 
       // Skip if perfect score on minibatch
       if (this.skipPerfectScore) {
+        this.log('debug', 'Evaluating parent for perfect score check', {
+          iteration,
+          parentIdx,
+          candidatePreview: Object.keys(parent.candidate).reduce((acc, key) => {
+            acc[key] = parent.candidate[key].substring(0, 50) + '...';
+            return acc;
+          }, {} as Record<string, string>)
+        });
+
         const minibatchEval = await this.adapter.evaluate(
           minibatch,
           parent.candidate,
@@ -259,6 +287,14 @@ export class GEPA {
           this.totalCostUSD += c;
         }
         const avgScore = average(minibatchEval.scores);
+        
+        this.log('debug', 'Perfect score check result', {
+          iteration,
+          avgScore,
+          perfectScore: this.perfectScore,
+          willSkip: avgScore >= this.perfectScore
+        });
+        
         if (avgScore >= this.perfectScore) {
           this.log('debug', 'Skipping iteration due to perfect score', { iteration, avgScore });
           continue;
@@ -276,8 +312,45 @@ export class GEPA {
         minibatch,
         componentsToUpdate
       );
+      
+      // Log diff between parent and proposed candidate
+      const oldSystem = parent.candidate.system || '';
+      const newSystem = newCandidate.system || '';
+      const proposedDiff = this.computeStringDiff(oldSystem, newSystem);
+      
+      if (proposedDiff.changed) {
+        console.log('\n\x1b[1m=== Proposed System Prompt Changes (Iteration ' + iteration + ') ===\x1b[0m');
+        console.log(`\x1b[32mLines added: ${proposedDiff.added}\x1b[0m`);
+        console.log(`\x1b[31mLines removed: ${proposedDiff.removed}\x1b[0m`);
+        console.log(`\x1b[33mLines modified: ${proposedDiff.modified}\x1b[0m`);
+        if (proposedDiff.changes.length > 0) {
+          console.log('\nChanges:');
+          proposedDiff.changes.forEach(change => {
+            if (change.startsWith('+')) {
+              console.log(`\x1b[32m${change}\x1b[0m`);
+            } else if (change.startsWith('-')) {
+              console.log(`\x1b[31m${change}\x1b[0m`);
+            } else {
+              console.log(change);
+            }
+          });
+        }
+        console.log('\x1b[1m=========================\x1b[0m\n');
+      } else {
+        console.log(`\n\x1b[90m[Iteration ${iteration}] No changes proposed to system prompt\x1b[0m\n`);
+      }
 
       // Evaluate new candidate on minibatch for acceptance
+      this.log('debug', 'Evaluating parent candidate on minibatch', {
+        iteration,
+        parentIdx,
+        minibatchSize: minibatch.length,
+        parentCandidatePreview: Object.keys(parent.candidate).reduce((acc, key) => {
+          acc[key] = parent.candidate[key].substring(0, 50) + '...';
+          return acc;
+        }, {} as Record<string, string>)
+      });
+
       const parentMinibatchEval = await this.adapter.evaluate(
         minibatch,
         parent.candidate,
@@ -287,6 +360,16 @@ export class GEPA {
         const c1 = parentMinibatchEval.metrics.reduce((s, m) => s + (m.cost_usd ?? 0), 0);
         this.totalCostUSD += c1;
       }
+
+      this.log('debug', 'Evaluating new candidate on minibatch', {
+        iteration,
+        minibatchSize: minibatch.length,
+        newCandidatePreview: Object.keys(newCandidate).reduce((acc, key) => {
+          acc[key] = newCandidate[key].substring(0, 50) + '...';
+          return acc;
+        }, {} as Record<string, string>)
+      });
+
       const childMinibatchEval = await this.adapter.evaluate(
         minibatch,
         newCandidate,
@@ -300,6 +383,14 @@ export class GEPA {
       const parentMinibatchSum = parentMinibatchEval.scores.reduce((a, b) => a + b, 0);
       const childMinibatchSum = childMinibatchEval.scores.reduce((a, b) => a + b, 0);
 
+      this.log('debug', 'Minibatch evaluation scores', {
+        iteration,
+        parentSum: parentMinibatchSum,
+        childSum: childMinibatchSum,
+        improvement: childMinibatchSum - parentMinibatchSum,
+        tieEpsilon: this.tieEpsilon
+      });
+
       // Accept if child is better
       const accepted = childMinibatchSum > parentMinibatchSum + this.tieEpsilon;
 
@@ -307,11 +398,37 @@ export class GEPA {
         // Full evaluation on validation set
         const childEval = await this.evaluateCandidate(newCandidate, validationSet);
         
-        candidates.push({
+        const newCandidateEntry = {
           candidate: newCandidate,
           scores: childEval.scores,
           scalarScore: childEval.scalarScore,
           parent: parentIdx,
+        };
+        
+        this.log('debug', 'Adding new candidate to array', {
+          iteration,
+          candidateIndex: candidates.length,
+          parentIndex: parentIdx,
+          newScalarScore: childEval.scalarScore,
+          newScores: childEval.scores,
+          candidatesArraySizeBefore: candidates.length,
+          newCandidateComponentsPreview: Object.keys(newCandidate).reduce((acc, key) => {
+            acc[key] = newCandidate[key].substring(0, 100) + (newCandidate[key].length > 100 ? '...' : '');
+            return acc;
+          }, {} as Record<string, string>)
+        });
+
+        candidates.push(newCandidateEntry);
+
+        this.log('debug', 'Candidate array updated', {
+          iteration,
+          candidatesArraySizeAfter: candidates.length,
+          newCandidateIndexInArray: candidates.length - 1,
+          allCandidateScores: candidates.map((c, idx) => ({
+            idx,
+            scalarScore: c.scalarScore,
+            parentIdx: c.parent
+          }))
         });
 
         perInstanceScores.push(childEval.instanceScores);
@@ -321,17 +438,38 @@ export class GEPA {
 
         stagnation = 0;
         
+        // Log diff between old and new system prompts
+        const oldSystem = parent.candidate.system || '';
+        const newSystem = newCandidate.system || '';
+        const diff = this.computeStringDiff(oldSystem, newSystem);
+        
         this.log('info', 'Accepted new candidate', {
           iteration,
           improvement: childMinibatchSum - parentMinibatchSum,
           valScore: childEval.scalarScore,
         });
+        
+        if (diff.changed) {
+          console.log('\n=== System Prompt Changes ===');
+          console.log(`Lines added: ${diff.added}`);
+          console.log(`Lines removed: ${diff.removed}`);
+          console.log(`Lines modified: ${diff.modified}`);
+          if (diff.changes.length > 0) {
+            console.log('\nChanges:');
+            diff.changes.forEach(change => console.log(change));
+          }
+          console.log('=========================\n');
+        }
       } else {
         stagnation++;
         this.log('debug', 'Rejected candidate', {
           iteration,
           parentScore: parentMinibatchSum,
           childScore: childMinibatchSum,
+          rejectedCandidatePreview: Object.keys(newCandidate).reduce((acc, key) => {
+            acc[key] = newCandidate[key].substring(0, 100) + (newCandidate[key].length > 100 ? '...' : '');
+            return acc;
+          }, {} as Record<string, string>)
         });
       }
 
@@ -469,6 +607,14 @@ export class GEPA {
     scalarScore: number;
     instanceScores: number[];
   }> {
+    this.log('debug', 'Evaluating candidate on full dataset', {
+      datasetSize: dataset.length,
+      candidateComponentsPreview: Object.keys(candidate).reduce((acc, key) => {
+        acc[key] = candidate[key].substring(0, 100) + (candidate[key].length > 100 ? '...' : '');
+        return acc;
+      }, {} as Record<string, string>)
+    });
+
     const evalBatch = await this.adapter.evaluate(dataset, candidate, false);
     this.totalMetricCalls += dataset.length;
     // Accumulate cost if available
@@ -492,6 +638,14 @@ export class GEPA {
 
     const scalarScore = correctness; // keep scalar selection on correctness by default
 
+    this.log('debug', 'Candidate evaluation complete', {
+      correctness,
+      avgLatency,
+      scalarScore,
+      scores,
+      instanceScoresRange: evalBatch.scores.length > 0 ? [Math.min(...evalBatch.scores), Math.max(...evalBatch.scores)] : []
+    });
+
     return {
       scores,
       scalarScore,
@@ -507,6 +661,15 @@ export class GEPA {
     minibatch: any[],
     componentsToUpdate: string[]
   ): Promise<Candidate> {
+    this.log('debug', 'Starting candidate generation', {
+      componentsToUpdate,
+      minibatchSize: minibatch.length,
+      inputCandidatePreview: Object.keys(candidate).reduce((acc, key) => {
+        acc[key] = candidate[key].substring(0, 100) + (candidate[key].length > 100 ? '...' : '');
+        return acc;
+      }, {} as Record<string, string>)
+    });
+
     // Evaluate with traces for reflection
     const evalBatch = await this.adapter.evaluate(minibatch, candidate, true);
     this.totalMetricCalls += minibatch.length;
@@ -515,28 +678,59 @@ export class GEPA {
       this.totalCostUSD += cost;
     }
 
+    this.log('debug', 'Evaluation complete for reflection', {
+      avgScore: average(evalBatch.scores),
+      scoresRange: [Math.min(...evalBatch.scores), Math.max(...evalBatch.scores)],
+      hasTraces: evalBatch.trajectories && evalBatch.trajectories.length > 0
+    });
+
     // Check if adapter has custom proposal function
     if (this.adapter.proposeNewTexts) {
+      this.log('debug', 'Using adapter custom proposal function');
       const reflectiveDataset = this.adapter.makeReflectiveDataset(
         candidate,
         evalBatch,
         componentsToUpdate
       );
+      this.log('debug', 'Reflective dataset created', {
+        components: Object.keys(reflectiveDataset),
+        exampleCounts: Object.keys(reflectiveDataset).reduce((acc, comp) => {
+          acc[comp] = reflectiveDataset[comp]?.length ?? 0;
+          return acc;
+        }, {} as Record<string, number>)
+      });
       // Try to generate a human-readable summary for verbose mode
       await this.generateAndStoreReflectionSummary(reflectiveDataset);
-      return await this.adapter.proposeNewTexts(
+      const newCandidate = await this.adapter.proposeNewTexts(
         candidate,
         reflectiveDataset,
         componentsToUpdate
       );
+      this.log('debug', 'New candidate generated via adapter', {
+        candidateChanged: JSON.stringify(candidate) !== JSON.stringify(newCandidate),
+        newCandidatePreview: Object.keys(newCandidate).reduce((acc, key) => {
+          acc[key] = newCandidate[key].substring(0, 100) + (newCandidate[key].length > 100 ? '...' : '');
+          return acc;
+        }, {} as Record<string, string>)
+      });
+      return newCandidate;
     }
 
     // Default reflection using LLM
+    this.log('debug', 'Using default LLM reflection');
     const reflectiveDataset = this.adapter.makeReflectiveDataset(
       candidate,
       evalBatch,
       componentsToUpdate
     );
+
+    this.log('debug', 'Reflective dataset created', {
+      components: Object.keys(reflectiveDataset),
+      exampleCounts: Object.keys(reflectiveDataset).reduce((acc, comp) => {
+        acc[comp] = reflectiveDataset[comp]?.length ?? 0;
+        return acc;
+      }, {} as Record<string, number>)
+    });
 
     const newCandidate = { ...candidate };
 
@@ -544,7 +738,16 @@ export class GEPA {
     const promptSections: string[] = [];
     for (const component of componentsToUpdate) {
       const examples = reflectiveDataset[component] || [];
-      if (examples.length === 0) continue;
+      if (examples.length === 0) {
+        this.log('debug', 'Skipping component with no examples', { component });
+        continue;
+      }
+
+      this.log('debug', 'Generating new text for component', {
+        component,
+        exampleCount: examples.length,
+        currentTextLength: candidate[component]?.length ?? 0
+      });
 
       const prompt = this.buildReflectionPrompt(
         component,
@@ -554,12 +757,33 @@ export class GEPA {
       promptSections.push(`----- Component: ${component} -----\n${prompt}`);
 
       const newText = await this.reflectionLM(prompt);
-      newCandidate[component] = newText.trim();
+      const trimmedNewText = newText.trim();
+      
+      this.log('debug', 'Component text updated', {
+        component,
+        oldTextLength: candidate[component]?.length ?? 0,
+        newTextLength: trimmedNewText.length,
+        textChanged: candidate[component] !== trimmedNewText,
+        oldTextPreview: candidate[component]?.substring(0, 100) + (candidate[component]?.length > 100 ? '...' : ''),
+        newTextPreview: trimmedNewText.substring(0, 100) + (trimmedNewText.length > 100 ? '...' : '')
+      });
+      
+      newCandidate[component] = trimmedNewText;
     }
     this.latestReflectionPrompt = promptSections.length > 0 ? promptSections.join("\n\n") : null;
 
     // Generate user-readable summary for this iteration (verbose mode)
     await this.generateAndStoreReflectionSummary(reflectiveDataset);
+
+    const candidateChanged = JSON.stringify(candidate) !== JSON.stringify(newCandidate);
+    this.log('debug', 'Candidate generation complete', {
+      candidateChanged,
+      componentsUpdated: componentsToUpdate.filter(comp => candidate[comp] !== newCandidate[comp]),
+      newCandidatePreview: Object.keys(newCandidate).reduce((acc, key) => {
+        acc[key] = newCandidate[key].substring(0, 100) + (newCandidate[key].length > 100 ? '...' : '');
+        return acc;
+      }, {} as Record<string, string>)
+    });
 
     return newCandidate;
   }
@@ -638,16 +862,35 @@ Use short paragraphs and bullet points. Avoid code fences. Feedback JSON follows
     }
 
     const model = typeof config === 'string' ? config : config.model;
-    const temperature = typeof config === 'object' ? config.temperature : 0.7;
+    const {
+      temperature = 0.7,
+      tools,
+      providerOptions,
+      stopWhen,
+      toolChoice,
+      maxToolRoundtrips,
+      experimentalTelemetry,
+      ...otherOpts
+    } = typeof config === 'object' ? config : {};
     this.reflectionModelName = model;
 
     return async (prompt: string) => {
-      const result = await generateText({
+      const generateTextOpts: any = {
         model,
         messages: [{ role: 'user', content: prompt }],
         temperature,
-        providerOptions: this.reflectionLMProviderOptions,
-      });
+        providerOptions: providerOptions || this.reflectionLMProviderOptions,
+        ...otherOpts,
+      };
+      
+      // Add optional fields if they exist
+      if (tools) generateTextOpts.tools = tools;
+      if (toolChoice) generateTextOpts.toolChoice = toolChoice;
+      if (maxToolRoundtrips) generateTextOpts.maxToolRoundtrips = maxToolRoundtrips;
+      if (stopWhen) generateTextOpts.stopWhen = stopWhen;
+      if (experimentalTelemetry) generateTextOpts.experimental_telemetry = experimentalTelemetry;
+      
+      const result = await generateText(generateTextOpts);
       return result.text;
     };
   }
@@ -673,6 +916,56 @@ Use short paragraphs and bullet points. Avoid code fences. Feedback JSON follows
     if (this.logger) {
       this.logger.log(level, message, data);
     }
+  }
+
+  /**
+   * Compute simple line-based diff between two strings
+   */
+  private computeStringDiff(oldStr: string, newStr: string): {
+    changed: boolean;
+    added: number;
+    removed: number;
+    modified: number;
+    changes: string[];
+  } {
+    const oldLines = oldStr.split('\n');
+    const newLines = newStr.split('\n');
+    
+    if (oldStr === newStr) {
+      return { changed: false, added: 0, removed: 0, modified: 0, changes: [] };
+    }
+    
+    const changes: string[] = [];
+    let added = 0;
+    let removed = 0;
+    let modified = 0;
+    
+    // Simple line-by-line diff
+    const maxLen = Math.max(oldLines.length, newLines.length);
+    for (let i = 0; i < maxLen; i++) {
+      const oldLine = oldLines[i];
+      const newLine = newLines[i];
+      
+      if (oldLine === undefined && newLine !== undefined) {
+        added++;
+        changes.push(`+ ${newLine}`);
+      } else if (newLine === undefined && oldLine !== undefined) {
+        removed++;
+        changes.push(`- ${oldLine}`);
+      } else if (oldLine !== newLine) {
+        modified++;
+        changes.push(`- ${oldLine}`);
+        changes.push(`+ ${newLine}`);
+      }
+    }
+    
+    return {
+      changed: true,
+      added,
+      removed,
+      modified,
+      changes: changes.slice(0, 50), // Limit to first 50 changes
+    };
   }
 }
 
